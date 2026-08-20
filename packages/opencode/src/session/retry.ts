@@ -38,6 +38,8 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /^timeout$|\b(?:request|response|connection|network|stream|read) (?:timeout|timed out|time out)\b/i,
   /try your request again|retry your request|resource exhausted|resource_exhausted/i,
   /\btry again (?:later|in\b)|\b(?:currently|temporarily) at capacity\b/i,
+  // [wxz-patch] stream read failures (e.g. "Failed to read wxz/openai-compatible-chat stream") are transient
+  /failed to read .+ stream/i,
 ]
 
 function cap(ms: number) {

@@ -122,8 +122,11 @@ export const appendOrStart = <K extends StreamKey>(
   missingToolMessage: string,
 ): AppendOutcome<K> | LLMError => {
   const current = tools[key]
-  const id = delta.id ?? current?.id
-  const name = delta.name ?? current?.name
+  // Some OpenAI-compatible endpoints (e.g. DashScope) send empty strings for
+  // id/name on subsequent deltas instead of omitting them; treat "" as absent
+  // so the fallback to accumulated identity triggers (upstream issue #37841).
+  const id = delta.id || current?.id
+  const name = delta.name || current?.name
   if (!id || !name) return eventError(route, missingToolMessage)
 
   const tool = {

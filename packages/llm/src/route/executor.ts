@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer, Random } from "effect"
+import { Cause, Context, Effect, Layer } from "effect"
 import {
   FetchHttpClient,
   Headers,
@@ -33,9 +33,8 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/LLM/RequestExecutor") {}
 
 const BODY_LIMIT = 16_384
-const MAX_RETRIES = 2
-const BASE_DELAY_MS = 500
-const MAX_DELAY_MS = 10_000
+const MAX_RETRIES = 15 // [wxz-patch] 429 rate-limit retry: at most 15 attempts
+const RETRY_INTERVAL_MS = 1_000 // [wxz-patch] 429 rate-limit retry: fixed 1s interval
 const REDACTED = "<redacted>"
 
 // One source of truth for what counts as a sensitive name across headers,
@@ -342,13 +341,9 @@ const toHttpError = (redactedNames: ReadonlyArray<string | RegExp>) => (error: u
   })
 }
 
-const retryDelay = (error: LLMError, attempt: number) => {
-  if (error.retryAfterMs !== undefined) return Effect.succeed(Math.min(error.retryAfterMs, MAX_DELAY_MS))
-  return Random.nextBetween(
-    Math.min(BASE_DELAY_MS * 2 ** attempt * 0.8, MAX_DELAY_MS),
-    Math.min(BASE_DELAY_MS * 2 ** attempt * 1.2, MAX_DELAY_MS),
-  ).pipe(Effect.map((delay) => Math.round(delay)))
-}
+// [wxz-patch] fixed 1s cadence (was exponential backoff + retry-after); with
+// MAX_RETRIES=15 this covers minute-level quota reset windows.
+const retryDelay = (_error: LLMError, _attempt: number) => Effect.succeed(RETRY_INTERVAL_MS)
 
 const retryStatusFailures = <A, R>(
   effect: Effect.Effect<A, LLMError, R>,

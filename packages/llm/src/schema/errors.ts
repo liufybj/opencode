@@ -90,8 +90,11 @@ export class QuotaExceededReason extends Schema.Class<QuotaExceededReason>("LLM.
   providerMetadata: Schema.optional(ProviderMetadata),
   http: Schema.optional(HttpContext),
 }) {
+  // [wxz-patch] treat quota exhaustion as transient: internal LLM gateways reset
+  // RPM/TPM quotas per minute, so bounded executor retries can ride out the
+  // window instead of failing the provider turn immediately.
   get retryable() {
-    return false
+    return true
   }
 }
 

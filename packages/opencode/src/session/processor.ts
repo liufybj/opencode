@@ -3,6 +3,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
+import * as DateTime from "effect/DateTime"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -24,6 +25,8 @@ import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
+import { SessionEvent } from "@opencode-ai/schema/session-event"
+import { SessionMessage } from "@opencode-ai/schema/session-message"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 
 const DOOM_LOOP_THRESHOLD = 3
@@ -62,6 +65,8 @@ type ToolCall = {
   messageID: SessionV1.ToolPart["messageID"]
   sessionID: SessionV1.ToolPart["sessionID"]
   done: Deferred.Deferred<void>
+  /** [wxz-patch] Accumulate live input fragments for the replayable input-ended boundary. */
+  input: string
 }
 
 interface ProcessorContext extends Input {
@@ -248,6 +253,7 @@ const layer = Layer.effect(
           partID: part.id,
           messageID: part.messageID,
           sessionID: part.sessionID,
+          input: "",
         }
         return { call: ctx.toolcalls[input.id], part }
       })
@@ -317,14 +323,40 @@ const layer = Layer.effect(
               throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
             }
             yield* ensureToolCall(value)
+            // [wxz-patch] Restore the native tool-input event bridge for the V1 processor.
+            yield* events.publish(SessionEvent.Tool.Input.Started, {
+              timestamp: DateTime.makeUnsafe(Date.now()),
+              sessionID: ctx.sessionID,
+              assistantMessageID: SessionMessage.ID.make(ctx.assistantMessage.id),
+              callID: value.id,
+              name: value.name,
+            })
             return
 
-          case "tool-input-delta":
-            yield* ensureToolCall(value)
+          case "tool-input-delta": {
+            const match = yield* ensureToolCall(value)
+            if (!value.text) return
+            match.call.input += value.text
+            // Delta is live-only by schema: it is sent to SSE listeners but never persisted or projected.
+            yield* events.publish(SessionEvent.Tool.Input.Delta, {
+              timestamp: DateTime.makeUnsafe(Date.now()),
+              sessionID: ctx.sessionID,
+              assistantMessageID: SessionMessage.ID.make(ctx.assistantMessage.id),
+              callID: value.id,
+              delta: value.text,
+            })
             return
+          }
 
           case "tool-input-end": {
-            yield* ensureToolCall(value)
+            const match = yield* ensureToolCall(value)
+            yield* events.publish(SessionEvent.Tool.Input.Ended, {
+              timestamp: DateTime.makeUnsafe(Date.now()),
+              sessionID: ctx.sessionID,
+              assistantMessageID: SessionMessage.ID.make(ctx.assistantMessage.id),
+              callID: value.id,
+              text: match.call.input,
+            })
             return
           }
 

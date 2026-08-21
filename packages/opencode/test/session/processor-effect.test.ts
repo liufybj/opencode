@@ -753,6 +753,12 @@ it.live("session.processor effect tests complete AI SDK tool calls when native f
     ({ dir, llm }) =>
       Effect.gen(function* () {
         const { processors, session, provider } = yield* boot()
+        const events = yield* EventV2Bridge.Service
+        const seen: { type: string; data: unknown }[] = []
+        const off = yield* events.listen((event) => {
+          seen.push({ type: event.type, data: event.data })
+          return Effect.void
+        })
 
         yield* llm.tool("lookup", { query: "weather" })
 
@@ -792,12 +798,18 @@ it.live("session.processor effect tests complete AI SDK tool calls when native f
             }),
           },
         })
+        yield* off
 
         const parts = yield* MessageV2.parts(msg.id)
         const call = parts.find((part): part is SessionV1.ToolPart => part.type === "tool")
+        const inputDeltas = seen.filter((event) => event.type === "session.next.tool.input.delta")
 
         expect(value).toBe("continue")
         expect(yield* llm.calls).toBe(1)
+        expect(seen.map((event) => event.type)).toContain("session.next.tool.input.started")
+        expect(inputDeltas.length).toBeGreaterThan(0)
+        expect(seen.map((event) => event.type)).toContain("session.next.tool.input.ended")
+        expect(inputDeltas.map((event) => (event.data as { delta: string }).delta).join("")).toContain("weather")
         expect(call?.callID).toBe("call_1")
         expect(call?.tool).toBe("lookup")
         expect(call?.state.status).toBe("completed")
@@ -1054,7 +1066,7 @@ itProviderError.live("session.processor effect tests fail provider-executed erro
         if (call?.state.status === "error") expect(call.state.error).toBe("provider boom")
         expect(seen).toContain(MessageV2.Event.PartUpdated.type)
         expect(seen).toContain(MessageV2.Event.Updated.type)
-        expect(seen.filter((type) => type.startsWith("session.next."))).toEqual([])
+        expect(seen.filter((type) => type.startsWith("session.next.tool.") && !type.startsWith("session.next.tool.input."))).toEqual([])
       }),
     { config: cfg },
   ),

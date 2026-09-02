@@ -15,6 +15,8 @@ export const ID = Schema.String.check(Schema.isStartsWith("que")).pipe(
 export const Option = Schema.Struct({
   label: Schema.String.annotate({ description: "Display text (1-5 words, concise)" }),
   description: Schema.String.annotate({ description: "Explanation of choice" }),
+  // [wxz-patch] Preselect this option so the user doesn't have to pick it again
+  selected: Schema.optional(Schema.Boolean).annotate({ description: "Preselect this option (default: false)" }),
 }).annotate({ identifier: "QuestionOption" })
 
 const base = {
@@ -22,6 +24,10 @@ const base = {
   header: Schema.String.annotate({ description: "Very short label (max 30 chars)" }),
   options: Schema.Array(Option).annotate({ description: "Available choices" }),
   multiple: Schema.optional(Schema.Boolean).annotate({ description: "Allow selecting multiple choices" }),
+  // [wxz-patch] Prefill the custom text input with a value the user already provided
+  defaultValue: Schema.optional(Schema.String).annotate({
+    description: "Prefill the custom text input with this value",
+  }),
 }
 
 export const Info = Schema.Struct({

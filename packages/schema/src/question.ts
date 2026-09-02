@@ -22,6 +22,8 @@ export type ID = typeof ID.Type
 export const Option = Schema.Struct({
   label: Schema.String.annotate({ description: "Display text (1-5 words, concise)" }),
   description: Schema.String.annotate({ description: "Explanation of choice" }),
+  // [wxz-patch] Preselect this option so the user doesn't have to pick it again
+  selected: Schema.Boolean.pipe(optional).annotate({ description: "Preselect this option (default: false)" }),
 }).annotate({ identifier: "QuestionV2.Option" })
 export interface Option extends Schema.Schema.Type<typeof Option> {}
 
@@ -30,6 +32,10 @@ const base = {
   header: Schema.String.annotate({ description: "Very short label (max 30 chars)" }),
   options: Schema.Array(Option).annotate({ description: "Available choices" }),
   multiple: Schema.Boolean.pipe(optional).annotate({ description: "Allow selecting multiple choices" }),
+  // [wxz-patch] Prefill the custom text input with a value the user already provided
+  defaultValue: Schema.String.pipe(optional).annotate({
+    description: "Prefill the custom text input with this value",
+  }),
 }
 
 export const Info = Schema.Struct({

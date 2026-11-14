@@ -33,7 +33,7 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/LLM/RequestExecutor") {}
 
 const BODY_LIMIT = 16_384
-const MAX_RETRIES = 15 // [wxz-patch] 429 rate-limit retry: at most 15 attempts
+const MAX_RETRIES = 30 // [wxz-patch] 429 rate-limit retry: at most 30 attempts
 const RETRY_INTERVAL_MS = 1_000 // [wxz-patch] 429 rate-limit retry: fixed 1s interval
 const REDACTED = "<redacted>"
 
@@ -342,7 +342,7 @@ const toHttpError = (redactedNames: ReadonlyArray<string | RegExp>) => (error: u
 }
 
 // [wxz-patch] fixed 1s cadence (was exponential backoff + retry-after); with
-// MAX_RETRIES=15 this covers minute-level quota reset windows.
+// MAX_RETRIES=30 this covers minute-level quota reset windows.
 const retryDelay = (_error: LLMError, _attempt: number) => Effect.succeed(RETRY_INTERVAL_MS)
 
 const retryStatusFailures = <A, R>(

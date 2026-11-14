@@ -563,7 +563,9 @@ it.live("session.processor effect tests retry recognized structured json errors"
       Effect.gen(function* () {
         const { processors, session, provider } = yield* boot()
 
-        yield* llm.error(429, { type: "error", error: { type: "too_many_requests" } })
+        // [wxz-patch] #6: 429 限流由 executor 内层重试接管，外层不再处理；
+        // 这里用 4xx + 可重试结构化文案覆盖「结构化 JSON 错误被识别为可重试」的路径。
+        yield* llm.error(400, { type: "error", error: { type: "provider_returned_error" } })
         yield* llm.text("after")
 
         const chat = yield* session.create({})

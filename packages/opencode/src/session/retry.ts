@@ -42,6 +42,10 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /failed to read .+ stream/i,
 ]
 
+// [wxz-patch] 429/限流统一由 HTTP executor 按「最多 30 次、固定 1s」重试；外层不再叠加指数退避重试，
+// 否则 5（外层）× 30（executor）会把重试预算放大且总时长不可控。
+const RATE_LIMIT_PATTERN = /rate increased too quickly|rate limit|rate-limit|rate_limit|limit_burst_rate|too many requests/i
+
 function cap(ms: number) {
   return Math.min(ms, RETRY_MAX_DELAY)
 }
@@ -89,15 +93,8 @@ export function retryable(error: Err, provider: string) {
   if (SessionV1.ContextOverflowError.isInstance(error)) return undefined
   if (SessionV1.APIError.isInstance(error)) {
     const status = error.data.statusCode
-    // 5xx errors are transient server failures and should always be retried,
-    // even when the provider SDK doesn't explicitly mark them as retryable.
-    if (
-      !error.data.isRetryable &&
-      !(status !== undefined && status >= 500) &&
-      !matchesRetryableMessage(error.data.message) &&
-      !matchesRetryableMessage(error.data.responseBody)
-    )
-      return undefined
+    // [wxz-patch] 额度用尽是一次性账号状态而非瞬时限流，必须带回 action 交给 UI，
+    // 所以先于下面的 429 短路处理。
     if (error.data.responseBody?.includes("FreeUsageLimitError")) {
       return {
         message: GO_UPSELL_MESSAGE,
@@ -144,6 +141,18 @@ export function retryable(error: Err, provider: string) {
         },
       }
     }
+    // [wxz-patch] rate-limit retries are owned by the HTTP executor (30 × 1s); do not re-enter the outer loop
+    if (status === 429 || RATE_LIMIT_PATTERN.test(error.data.message ?? "") || RATE_LIMIT_PATTERN.test(error.data.responseBody ?? ""))
+      return undefined
+    // 5xx errors are transient server failures and should always be retried,
+    // even when the provider SDK doesn't explicitly mark them as retryable.
+    if (
+      !error.data.isRetryable &&
+      !(status !== undefined && status >= 500) &&
+      !matchesRetryableMessage(error.data.message) &&
+      !matchesRetryableMessage(error.data.responseBody)
+    )
+      return undefined
     return { message: error.data.message.includes("Overloaded") ? "Provider is overloaded" : error.data.message }
   }
 

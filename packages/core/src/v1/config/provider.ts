@@ -118,6 +118,11 @@ export const Info = Schema.Struct({
           description:
             "Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted.",
         }),
+        // [wxz-patch] #8: 从 {baseURL|api}/models 动态发现模型，合并进目录；静态配置优先。
+        discoverModels: Schema.optional(Schema.Boolean).annotate({
+          description:
+            "Fetch the model list from {baseURL|api}/models at provider init and merge unknown models into the catalog. Statically configured models take precedence.",
+        }),
       }),
       [Schema.Record(Schema.String, Schema.Any)],
     ),

@@ -98,6 +98,61 @@ function googleVertexAnthropicBaseURL(project: string | undefined, location: str
   return `https://aiplatform.${location}.rep.googleapis.com/v1/projects/${project}/locations/${location}/publishers/anthropic/models`
 }
 
+// [wxz-patch] #8 动态模型发现：config 里声明 options.discoverModels 的 provider，
+// 初始化时从 {baseURL|api}/models 拉全量模型并入目录；静态配置的模型优先。
+const DISCOVERY_TIMEOUT_MS = 5_000
+const DISCOVERY_VISION = /(^|[-/])(vl|vision|omni|ocr)([-/]|$)/i
+const DISCOVERY_AUDIO = /(^|[-/])(audio|asr|tts|omni)([-/]|$)/i
+const DISCOVERY_VIDEO = /(^|[-/])(video|t2v|i2v)([-/]|$)/i
+const DISCOVERY_REASONING = /(^|[-/])(r1|qwq|reasoner|thinking)([-/]|$)/i
+
+function discoveredModel(providerID: ProviderV2.ID, modelID: string, sample?: Model): Model {
+  const id = modelID.toLowerCase()
+  const vision = DISCOVERY_VISION.test(id)
+  const audio = DISCOVERY_AUDIO.test(id)
+  const video = DISCOVERY_VIDEO.test(id)
+  const reasoning = DISCOVERY_REASONING.test(id)
+  return {
+    id: ModelV2.ID.make(modelID),
+    providerID,
+    api: {
+      id: modelID,
+      npm: sample?.api.npm ?? "@ai-sdk/openai-compatible",
+      url: sample?.api.url ?? "",
+    },
+    name: modelID,
+    family: "",
+    capabilities: {
+      temperature: true,
+      reasoning,
+      attachment: vision || audio || video,
+      toolcall: true,
+      input: { text: true, audio, image: vision, video, pdf: false },
+      output: { text: true, audio: /(^|[-/])(tts|audio)([-/]|$)/i.test(id), image: false, video: false, pdf: false },
+      interleaved: reasoning && id.includes("deepseek") ? { field: "reasoning_content" } : false,
+    },
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    // 0 表示未知上限：与插件动态模型一致，不编造上下文窗口
+    limit: { context: 0, output: 0 },
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "",
+    variants: {},
+  }
+}
+
+async function discoverModelIDs(baseURL: string, apiKey: string): Promise<string[]> {
+  const res = await fetch(baseURL.replace(/\/+$/, "") + "/models", {
+    headers: { Accept: "application/json", Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+  })
+  if (!res.ok) return []
+  const body = (await res.json()) as any
+  const data = Array.isArray(body?.data) ? body.data : []
+  return data.flatMap((item: any) => (typeof item?.id === "string" && item.id ? [item.id] : []))
+}
+
 type BundledSDK = {
   languageModel(modelId: string): LanguageModelV3
   chat?: (modelId: string) => LanguageModelV3
@@ -1638,6 +1693,27 @@ const layer = Layer.effect(
           })
         }
 
+        // [wxz-patch] #8: 其余 provider 按 config 声明动态发现模型，失败保持静态目录
+        for (const [id, provider] of Object.entries(providers)) {
+          const providerID = ProviderV2.ID.make(id)
+          if (!isProviderAllowed(providerID)) continue
+          if (provider.options?.discoverModels !== true) continue
+          const sample = Object.values(provider.models)[0]
+          const baseURL =
+            typeof provider.options?.baseURL === "string" && provider.options.baseURL !== ""
+              ? provider.options.baseURL
+              : sample?.api.url
+          if (!baseURL || !provider.key) continue
+          const ids = yield* Effect.promise(() =>
+            discoverModelIDs(baseURL, provider.key!).catch(() => [] as string[]),
+          )
+          for (const modelID of ids) {
+            if (!provider.models[modelID]) {
+              provider.models[modelID] = discoveredModel(providerID, modelID, sample)
+            }
+          }
+        }
+
         for (const [id, provider] of Object.entries(providers)) {
           const providerID = ProviderV2.ID.make(id)
           if (!isProviderAllowed(providerID)) {
@@ -1770,6 +1846,7 @@ const layer = Layer.effect(
         const headerTimeout = options["headerTimeout"]
         delete options["chunkTimeout"]
         delete options["headerTimeout"]
+        delete options["discoverModels"]
 
         options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
           const fetchFn = customFetch ?? fetch
